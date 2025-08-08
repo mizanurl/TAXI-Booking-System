@@ -24,14 +24,33 @@ class CarSlabFareDatabase implements CarSlabFareInterface
      */
     public function getByCarId(int $carId): array
     {
-        $stmt = $this->db->prepare("SELECT * FROM car_slab_fares WHERE car_id = :car_id");
+        $query = "SELECT s.slab_value, s.slab_unit, s.slab_type, csf.fare_amount
+                    FROM 
+                        car_slab_fares csf
+                    JOIN 
+                        slabs s ON csf.slab_id = s.id
+                    WHERE
+                        csf.car_id = :car_id
+                    AND 
+                        csf.status = 1
+                    AND 
+                        s.status = 1
+                    ORDER BY 
+                        s.slab_type ASC;";
+
+        $stmt = $this->db->prepare($query);
         $stmt->bindParam(':car_id', $carId, PDO::PARAM_INT);
         $stmt->execute();
         $faresData = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         $fares = [];
         foreach ($faresData as $fareData) {
-            $fares[] = CarSlabFare::fromArray($fareData);
+            $fares[] = [
+                'slab_value' => $fareData['slab_value'],
+                'slab_unit' => $fareData['slab_unit'] == 0 ? 'Mile' : 'Hour',
+                'slab_type' => $fareData['slab_type'] == 0 ? 'Distance' : 'Hourly Service',
+                'fare_amount' => $fareData['fare_amount'],
+            ];
         }
         return $fares;
     }

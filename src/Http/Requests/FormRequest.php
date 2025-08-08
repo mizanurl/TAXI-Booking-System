@@ -52,7 +52,7 @@ abstract class FormRequest
             // For nested files (e.g., 'images.0.file'), getNestedValue would work.
             $file = null;
             if (str_contains($field, '.')) { // If it's a nested path, try to get file from nested structure
-                 $file = $this->getNestedValue($files, $field);
+                $file = $this->getNestedValue($files, $field);
             } else { // If it's a top-level field, check files array directly
                 $file = $files[$field] ?? null;
             }
@@ -70,7 +70,8 @@ abstract class FormRequest
                     // OR if it's present as an empty string (which we'll ignore later)
                     // We need to check if the file data is actually 'no file uploaded' or truly absent
                     if (($file === null || (is_array($file) && isset($file['error']) && $file['error'] === UPLOAD_ERR_NO_FILE)) &&
-                        ($value === null || (is_string($value) && trim($value) === ''))) {
+                        ($value === null || (is_string($value) && trim($value) === ''))
+                    ) {
                         continue; // Skip further validation, this field will be omitted or null in validatedData
                     }
                 } else {
@@ -109,6 +110,84 @@ abstract class FormRequest
                             $errorMessage = $messages["{$field}.required"] ?? "The {$displayFieldName} field is required.";
                         }
                         break;
+
+                    case 'required_if':
+                        // Syntax: required_if:other_field,value1,value2,...
+                        $params = explode(',', $ruleParam);
+                        $otherField = array_shift($params); // first part is the other field name
+                        $otherValue = $this->getNestedValue($data, $otherField);
+
+                        if (in_array($otherValue, $params, true)) {
+                            if (!$isFileField && ($value === null || (is_string($value) && trim($value) === '') || (is_array($value) && empty($value)))) {
+                                $isValid = false;
+                                $errorMessage = $messages["{$field}.required_if"]
+                                    ?? "The {$displayFieldName} field is required when {$otherField} is " . implode(' or ', $params) . ".";
+                            }
+                            if ($isFileField && ($file === null || (is_array($file) && isset($file['error']) && $file['error'] !== UPLOAD_ERR_OK))) {
+                                $isValid = false;
+                                $errorMessage = $messages["{$field}.required_if"]
+                                    ?? "The {$displayFieldName} field is required when {$otherField} is " . implode(' or ', $params) . ".";
+                            }
+                        }
+                        break;
+
+                    case 'required_with':
+                        $params = explode(',', $ruleParam);
+                        $required = false;
+
+                        foreach ($params as $paramField) {
+                            $paramValue = $this->getNestedValue($data, $paramField);
+                            if (!empty($paramValue) || $paramValue === '0') {
+                                $required = true;
+                                break;
+                            }
+                        }
+
+                        if ($required && ($value === null || (is_string($value) && trim($value) === '') || (is_array($value) && empty($value)))) {
+                            $isValid = false;
+                            $errorMessage = $messages["{$field}.required_with"]
+                                ?? "The {$displayFieldName} field is required when " . implode(', ', $params) . " is present.";
+                        }
+                        break;
+
+                    case 'required_without_all':
+                        $params = explode(',', $ruleParam);
+                        $allEmpty = true;
+
+                        foreach ($params as $paramField) {
+                            $paramValue = $this->getNestedValue($data, $paramField);
+                            if (!empty($paramValue) || $paramValue === '0') {
+                                $allEmpty = false;
+                                break;
+                            }
+                        }
+
+                        if ($allEmpty && ($value === null || (is_string($value) && trim($value) === '') || (is_array($value) && empty($value)))) {
+                            $isValid = false;
+                            $errorMessage = $messages["{$field}.required_without_all"]
+                                ?? "The {$displayFieldName} field is required when none of " . implode(', ', $params) . " are present.";
+                        }
+                        break;
+
+                    case 'required_if_gt':
+                        // Syntax: required_if_gt:other_field,number
+                        [$otherField, $minValue] = explode(',', $ruleParam);
+                        $otherValue = $this->getNestedValue($data, $otherField);
+
+                        if (is_numeric($otherValue) && $otherValue > (float)$minValue) {
+                            if (!$isFileField && ($value === null || (is_string($value) && trim($value) === '') || (is_array($value) && empty($value)))) {
+                                $isValid = false;
+                                $errorMessage = $messages["{$field}.required_if_gt"]
+                                    ?? "The {$displayFieldName} field is required when {$otherField} is greater than {$minValue}.";
+                            }
+                            if ($isFileField && ($file === null || (is_array($file) && isset($file['error']) && $file['error'] !== UPLOAD_ERR_OK))) {
+                                $isValid = false;
+                                $errorMessage = $messages["{$field}.required_if_gt"]
+                                    ?? "The {$displayFieldName} field is required when {$otherField} is greater than {$minValue}.";
+                            }
+                        }
+                        break;
+
                     case 'email':
                         if (!filter_var($value, FILTER_VALIDATE_EMAIL)) {
                             $isValid = false;
@@ -184,12 +263,22 @@ abstract class FormRequest
                                 // Map common extensions to MIME types
                                 switch ($ext) {
                                     case 'jpg':
-                                    case 'jpeg': $allowedMimeTypes[] = 'image/jpeg'; break;
-                                    case 'png': $allowedMimeTypes[] = 'image/png'; break;
-                                    case 'gif': $allowedMimeTypes[] = 'image/gif'; break;
-                                    case 'webp': $allowedMimeTypes[] = 'image/webp'; break;
-                                    case 'pdf': $allowedMimeTypes[] = 'application/pdf'; break;
-                                    // Add more as needed
+                                    case 'jpeg':
+                                        $allowedMimeTypes[] = 'image/jpeg';
+                                        break;
+                                    case 'png':
+                                        $allowedMimeTypes[] = 'image/png';
+                                        break;
+                                    case 'gif':
+                                        $allowedMimeTypes[] = 'image/gif';
+                                        break;
+                                    case 'webp':
+                                        $allowedMimeTypes[] = 'image/webp';
+                                        break;
+                                    case 'pdf':
+                                        $allowedMimeTypes[] = 'application/pdf';
+                                        break;
+                                        // Add more as needed
                                 }
                             }
 

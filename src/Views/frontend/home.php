@@ -534,8 +534,8 @@ $apiBaseUrl = str_replace(['http://', 'https://'], '//', $appUrl) . 'api/v1'; //
                         }
                     });
 
-                    console.log('Request Payload:');
-                    console.log(JSON.stringify(data, null, 2));
+                    //console.log('Request Payload:');
+                    //console.log(JSON.stringify(data, null, 2));
 
                     try {
                         const response = await fetch(`${API_BASE_URL}/fare-calculation`, {
@@ -546,19 +546,56 @@ $apiBaseUrl = str_replace(['http://', 'https://'], '//', $appUrl) . 'api/v1'; //
                             },
                             body: JSON.stringify(data)
                         });
+
                         const result = await response.json();
+
                         if (result.status === 'success') {
-                            console.log('Fare Calculation Result:', result.data);
-                            const message = `Fare Calculated:\nTotal Fare: $${result.data.total_fare}\nExtra Charges: $${result.data.extra_charges_total}\nExtra Tolls: $${result.data.extra_toll_charges_total}\nBase Fare: $${result.data.base_fare}\nChild Seat Cost: $${result.data.child_seat_cost}\nStopover Cost: $${result.data.stopover_cost}\nDistance: ${result.data.distance_km} km\nDuration: ${result.data.duration_minutes} minutes`;
+                            //console.log('Fare Calculation Result:', result.data);
+                            //const message = `Fare Calculated:\nTotal Fare: $${result.data.total_fare}\nExtra Charges: $${result.data.extra_charges_total}\nExtra Tolls: $${result.data.extra_toll_charges_total}\nBase Fare: $${result.data.base_fare}\nChild Seat Cost: $${result.data.child_seat_cost}\nStopover Cost: $${result.data.stopover_cost}\nDistance: ${result.data.distance_km} km\nDuration: ${result.data.duration_minutes} minutes`;
+                            const fare = result.data;
+
+                            let message = `<b>Fare Calculated:</b><br>
+                                            <b>Total Fare:</b> $${fare.total_fare}<br>`;
+
+                            if (fare.extra_charges && fare.extra_charges > 0) {
+                                message += `<b>Extra Charges:</b> ${fare.extra_charges}<br>`;
+                            }
+
+                            message += `<b>Base Fare:</b> $${fare.base_fare}<br>`;
+
+                            if (fare.child_seat_cost && fare.child_seat_cost > 0) {
+                                message += `<b>Child Seat Cost:</b> ${fare.child_seat_cost}<br>`;
+                            }
+                            if (fare.stopover_cost && fare.stopover_cost > 0) {
+                                message += `<b>Stopover Cost:</b> $${fare.stopover_cost}<br>`;
+                            }
+
+                            message += `<b>Distance:</b> ${fare.distance}<br>
+                                            <b>Duration:</b> ${fare.duration}`;
+
                             displayMessage(message, 'success');
                         } else {
                             console.error('Fare Calculation Error:', result.message, result.errors);
-                            const errorMessage = `Error calculating fare: ${result.message} ${result.errors ? '\n' + JSON.stringify(result.errors) : ''}`;
-                            displayMessage(errorMessage, 'error');
+                            //const errorMessage = `Error calculating fare: ${result.message} ${result.errors ? '\n' + JSON.stringify(result.errors) : ''}`;
+                            //displayMessage(errorMessage, 'error');
+                            const errorMessage = `
+                                <strong>Error calculating fare:</strong> ${result.message}<br>
+                                ${result.errors ? JSON.stringify(result.errors) : ''}
+                            `;
+                            Swal.fire({
+                                icon: 'error',
+                                title: 'Error',
+                                html: errorMessage
+                            });
                         }
                     } catch (error) {
                         console.error('Network or unexpected error during fare calculation:', error);
-                        displayMessage('An unexpected error occurred during fare calculation. Please try again.', 'error');
+                        //displayMessage('An unexpected error occurred during fare calculation. Please try again.', 'error');
+                        Swal.fire({
+                            icon: 'error',
+                            title: 'Error',
+                            Text: 'An unexpected error occurred during fare calculation. Please try again.'
+                        });
                     }
                 });
 

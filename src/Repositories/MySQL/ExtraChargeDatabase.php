@@ -31,18 +31,27 @@ class ExtraChargeDatabase implements ExtraChargeInterface
 
         return $extraChargeData ? ExtraCharge::fromArray($extraChargeData) : null;
     }
-    
+
     /**
      * Find an extra charge by area name.
+     * 
      * @param string $areaName
+     * @param bool $partial
+     * 
      * @return ExtraCharge|null
+     * 
      * @throws PDOException
      */
-    public function findByAreaName(string $areaName): ?ExtraCharge
+    public function findByAreaName(string $areaName, bool $partial = true): ?ExtraCharge
     {
+        $query = $partial
+            ? "SELECT * FROM extra_charges WHERE area_name LIKE :area_name LIMIT 1"
+            : "SELECT * FROM extra_charges WHERE area_name = :area_name LIMIT 1";
+
         try {
-            $stmt = $this->db->prepare("SELECT * FROM extra_charges WHERE area_name = :area_name LIMIT 1");
-            $stmt->bindValue(':area_name', $areaName, PDO::PARAM_STR);
+            $stmt = $this->db->prepare($query);
+            $paramValue = $partial ? '%' . $areaName . '%' : $areaName;
+            $stmt->bindValue(':area_name', $paramValue, PDO::PARAM_STR);
             $stmt->execute();
             $data = $stmt->fetch(PDO::FETCH_ASSOC);
 

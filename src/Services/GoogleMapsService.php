@@ -26,11 +26,11 @@ class GoogleMapsService
             return null;
         }
 
-        $originsString = implode('|', array_map(function($loc) {
+        $originsString = implode('|', array_map(function ($loc) {
             return "place_id:{$loc['placeId']}";
         }, $origins));
-        
-        $destinationsString = implode('|', array_map(function($loc) {
+
+        $destinationsString = implode('|', array_map(function ($loc) {
             return "place_id:{$loc['placeId']}";
         }, $destinations));
 
@@ -41,7 +41,7 @@ class GoogleMapsService
         ]);
 
         $response = @file_get_contents($url);
-        
+
         if ($response === false) {
             return null; // Or throw an exception
         }
@@ -85,7 +85,6 @@ class GoogleMapsService
 
             // Return null if no results are found or the status is not 'OK'
             return null;
-
         } catch (Exception $e) {
             error_log("Error in getPlaceDetailsByAddress: " . $e->getMessage());
             throw $e;
@@ -161,35 +160,70 @@ class GoogleMapsService
      */
     public function getDistanceMatrix(string $originName, string $destinationName): array
     {
+        
         $apiKey = $this->getApiKey();
-        $apiUrl = "https://maps.googleapis.com/maps/api/distancematrix/json?origins=" . urlencode($originName) . "&destinations=" . urlencode($destinationName) . "&units=imperial&key=" . $apiKey;
+
+        $url = 'https://routes.googleapis.com/directions/v2:computeRoutes';
+
+        $postData = [
+            "origin" => [
+                "address" => $originName
+            ],
+            "destination" => [
+                "address" => $destinationName
+            ],
+            "travelMode" => "DRIVE",
+            "routingPreference" => "TRAFFIC_AWARE",
+            "units" => "IMPERIAL"
+        ];
+
+        $headers = [
+            "Content-Type: application/json",
+            "X-Goog-Api-Key: {$apiKey}",
+            "X-Goog-FieldMask: routes.duration,routes.distanceMeters"
+        ];
 
         $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $apiUrl);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+
         $response = curl_exec($ch);
         curl_close($ch);
 
         $data = json_decode($response, true);
 
-        // Check for a valid response
-        if (isset($data['status']) && $data['status'] === 'OK' && !empty($data['rows'][0]['elements'][0])) {
-            $element = $data['rows'][0]['elements'][0];
-            if ($element['status'] === 'OK') {
-                $distanceInMiles = round($element['distance']['value'] / 1609.34, 2);
-                $durationInHours = round($element['duration']['value'] / 3600, 2);
+        if (isset($data['routes'][0])) {
+            $route = $data['routes'][0];
+            $distanceMiles = round($route['distanceMeters'] / 1609.34, 2); // Convert meters to miles
 
-                return [
-                    'distance' => $distanceInMiles,
-                    'duration' => $durationInHours
-                ];
-            }
+            $durationSeconds = $this->parseDuration($route['duration']);
+            $hours = floor($durationSeconds / 3600);
+            $minutes = floor(($durationSeconds % 3600) / 60);
+
+            $durationFormatted = sprintf('%d Hours %02d Minutes', $hours, $minutes);
+
+            //echo "<pre>";
+            //print_r("Distance: " . $distanceMiles . ' Miles; ');
+            //print_r("Duration: " . $durationHours . ' Hours');
+            //echo "</pre>";
+
+            return [
+                'distance' => $distanceMiles,
+                'duration' => $durationFormatted
+            ];
         }
 
-        // Return a default error value if the API call fails or returns an error
         return [
             'distance' => 0,
             'duration' => 0
         ];
+    }
+
+    private function parseDuration(string $duration): int
+    {
+        // e.g., "3600s"
+        return (int) str_replace('s', '', $duration);
     }
 }

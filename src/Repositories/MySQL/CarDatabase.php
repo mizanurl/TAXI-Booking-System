@@ -33,6 +33,33 @@ class CarDatabase implements CarInterface
     }
 
     /**
+     * Find a suitable car by the number of passengers and luggages.
+     * @param int $passengers
+     * @param int $luggages
+     * @param int $isChildSeat
+     * @return Car|null
+     * @throws PDOException
+     */
+    public function findSuitableCar(int $passengers, int $luggages, int $isChildSeat): ?Car
+    {
+        $query = "SELECT id FROM cars 
+                    WHERE num_of_passengers >= :passengers 
+                    AND (small_luggage_capacity + large_luggage_capacity) >= :luggages 
+                    AND is_child_seat = :isChildSeat 
+                    AND status = 1 
+                    LIMIT 1";
+
+        $stmt = $this->db->prepare($query);
+        $stmt->bindParam(':passengers', $passengers, PDO::PARAM_INT);
+        $stmt->bindParam(':luggages', $luggages, PDO::PARAM_INT);
+        $stmt->bindParam(':isChildSeat', $isChildSeat, PDO::PARAM_INT);
+        $stmt->execute();
+        $carData = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $carData ? Car::fromArray($carData) : null;
+    }
+
+    /**
      * Get all cars.
      * @return Car[]
      * @throws PDOException
@@ -56,7 +83,7 @@ class CarDatabase implements CarInterface
      */
     public function create(Car $car): int
     {
-        $data = $car->toDatabaseArray(); // Use toDatabaseArray for insertion
+        $data = $car->toArray();
 
         $sql = "INSERT INTO cars (regular_name, short_name, color, car_photo, car_features, base_fare, minimum_fare, small_luggage_capacity, large_luggage_capacity, extra_luggage_capacity, num_of_passengers, is_child_seat, status, created_at, updated_at)
                 VALUES (:regular_name, :short_name, :color, :car_photo, :car_features, :base_fare, :minimum_fare, :small_luggage_capacity, :large_luggage_capacity, :extra_luggage_capacity, :num_of_passengers, :is_child_seat, :status, :created_at, :updated_at)";
@@ -91,7 +118,7 @@ class CarDatabase implements CarInterface
      */
     public function update(Car $car): bool
     {
-        $data = $car->toDatabaseArray(); // Use toDatabaseArray for update
+        $data = $car->toArray();
 
         $sql = "UPDATE cars SET
                     regular_name = :regular_name,

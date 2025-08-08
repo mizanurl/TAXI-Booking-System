@@ -2,12 +2,15 @@
 
 namespace App\Services;
 
+use GuzzleHttp\Client;
+use GuzzleHttp\Exception\RequestException;
 use App\Repositories\Contracts\LocationInterface;
 
 class LocationService
 {
     private LocationInterface $locationRepository;
-    private string $googlePlacesApiBaseUrl = "https://maps.googleapis.com/maps/api/place/autocomplete/json";
+    //private string $googlePlacesApiBaseUrl = "https://maps.googleapis.com/maps/api/place/autocomplete/json";
+    private string $googlePlacesApiBaseUrl = "https://places.googleapis.com/v1/places:autocomplete";
 
     public function __construct(LocationInterface $locationRepository)
     {
@@ -24,67 +27,64 @@ class LocationService
      * @return array An array of location suggestions.
      * @throws \Exception If API key is not found or API call fails.
      */
-    public function getSuggestions(string $input, string $sessionToken, string $language = 'en', string $types = ''): array
+    public function getSuggestions(string $input): array
     {
         if (strlen($input) < 2) {
             throw new \InvalidArgumentException("Input must be at least 2 characters long.");
         }
 
-        $googleApiKey = $this->locationRepository->getLatestActiveKey();
+        $googleApiKeyData = $this->locationRepository->getLatestActiveKey();
 
-        if (!$googleApiKey) {
+        if (!$googleApiKeyData) {
             throw new \Exception("Google API Key not found or not active.");
         }
 
-        // Build the API request URL
-        $params = [
-            'input' => $input,
-            'key' => $googleApiKey->apiKey,
-            'sessiontoken' => $sessionToken,
-            'language' => $language,
-        ];
+        $googleApiKey = $googleApiKeyData->apiKey;
 
-        if (!empty($types)) {
-            $params['types'] = $types;
-        }
+        $client = new Client();
 
-        $url = $this->googlePlacesApiBaseUrl . '?' . http_build_query($params);
+        try {
+            $response = $client->post('https://places.googleapis.com/v1/places:autocomplete', [
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                    'X-Goog-Api-Key' => $googleApiKey,
+                    'X-Goog-FieldMask' => 'suggestions.placePrediction.placeId,suggestions.placePrediction.structuredFormat.mainText.text,suggestions.placePrediction.structuredFormat.secondaryText.text',
+                ],
+                'json' => [
+                    'input' => $input,
+                    'languageCode' => 'en',
+                    'sessionToken' => bin2hex(random_bytes(10)),
+                ],
+                'http_errors' => false
+            ]);
 
-        // Make the API call using cURL
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            $statusCode = $response->getStatusCode();
+            $bodyContent = (string) $response->getBody();
+            $body = json_decode($bodyContent, true);
 
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
-        curl_close($ch);
-
-        if ($response === false) {
-            throw new \Exception("cURL error: " . $error);
-        }
-
-        $responseData = json_decode($response, true);
-
-        if ($httpCode !== 200 || json_last_error() !== JSON_ERROR_NONE) {
-            $errorMessage = $responseData['error_message'] ?? 'Unknown API error';
-            throw new \Exception("Google Places API error (HTTP {$httpCode}): " . $errorMessage);
-        }
-
-        // Extract and return relevant suggestions
-        $suggestions = [];
-        if (isset($responseData['predictions']) && is_array($responseData['predictions'])) {
-            foreach ($responseData['predictions'] as $prediction) {
-                $suggestions[] = [
-                    'place_id' => $prediction['place_id'],
-                    'description' => $prediction['description'],
-                    'matched_substrings' => $prediction['matched_substrings'] ?? [],
-                    'terms' => $prediction['terms'] ?? []
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                return [
+                    'status' => 'error',
+                    'message' => 'Invalid JSON from Google: ' . json_last_error_msg() . ' | Raw: ' . $bodyContent,
                 ];
             }
-        }
 
-        return $suggestions;
+            if ($statusCode === 200 && isset($body['suggestions'])) {
+                return [
+                    'status' => 'success',
+                    'suggestions' => $body['suggestions']
+                ];
+            }
+
+            return [
+                'status' => 'error',
+                'message' => 'Google Places API error (HTTP ' . $statusCode . '): ' . ($body['error']['message'] ?? 'Unknown error')
+            ];
+        } catch (RequestException $e) {
+            return [
+                'status' => 'error',
+                'message' => 'HTTP Request failed: ' . $e->getMessage()
+            ];
+        }
     }
 }

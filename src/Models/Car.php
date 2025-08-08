@@ -151,31 +151,4 @@ class Car
             'updated_at' => $this->updatedAt,
         ];
     }
-
-    /**
-     * Converts the Car object to an associative array for database insertion/update.
-     * This method is specifically for saving to the database, so car_photo will be just the filename.
-     * @return array
-     */
-    public function toDatabaseArray(): array
-    {
-        return [
-            'id' => $this->id,
-            'regular_name' => $this->regularName,
-            'short_name' => $this->shortName,
-            'color' => $this->color,
-            'car_photo' => $this->carPhoto, // Store just the filename
-            'car_features' => $this->carFeatures,
-            'base_fare' => $this->baseFare, // Store as float, not formatted string
-            'minimum_fare' => $this->minimumFare, // Store as float, not formatted string
-            'small_luggage_capacity' => $this->smallLuggageCapacity,
-            'large_luggage_capacity' => $this->largeLuggageCapacity,
-            'extra_luggage_capacity' => $this->extraLuggageCapacity,
-            'num_of_passengers' => $this->numOfPassengers,
-            'is_child_seat' => $this->isChildSeat,
-            'status' => $this->status,
-            'created_at' => $this->createdAt,
-            'updated_at' => $this->updatedAt,
-        ];
-    }
 }

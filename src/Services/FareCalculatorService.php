@@ -10,6 +10,7 @@ use App\Services\CarService; // Assuming you have this for car-specific pricing
 use App\Services\CommonSettingService; // For general settings like stopover cost
 use App\Services\ExtraChargeService; // For extra charges based on zip codes
 use App\Exceptions\NotFoundException; // For airport not found
+use \DateTime;
 
 class FareCalculatorService
 {
@@ -39,140 +40,347 @@ class FareCalculatorService
     /**
      * Calculates the total fare based on various parameters.
      *
-     * @param array $data Contains all necessary booking details:
-     * - 'service_type': 'from_airport', 'to_airport', 'door_to_door'
-     * - 'pickup_lat', 'pickup_lng', 'pickup_zip_code' (for non-airport pickups)
-     * - 'dropoff_lat', 'dropoff_lng', 'dropoff_zip_code' (for non-airport dropoffs)
-     * - 'pickup_airport_id' (if 'from_airport' service)
-     * - 'dropoff_airport_id' (if 'to_airport' service)
-     * - 'adults', 'children', 'infant_seats', 'toddler_seats', 'booster_seats', 'stopovers'
-     * - 'car_id' (optional, if a specific car is chosen)
+     * @param array $data Contains all necessary booking details
      * @return array The calculated fare breakdown.
      * @throws \Exception If essential data is missing or calculation fails.
      */
     public function calculateFare(array $data): array
     {
         $baseFare = 0.0;
-        $distance = 0.0; // in meters
-        $duration = 0; // in seconds
-        $extraChargesTotal = 0.0;
-        $extraTollChargesTotal = 0.0;
+        $gratuityCharge = 0.0;
+        $distance = 0.0;
+        $duration = 0;
+        $extraCharges = 0.0;
         $airportToll = 0.0;
-        $airportParkingSurcharge = 0.0;
+        $tunnelCharge = 0.0;
+        $holidayCharge = 0.0;
+        $nightCharge = 0.0;
+        $hiddenNightCharge = 0.0;
         $childSeatCost = 0.0;
         $stopoverCost = 0.0;
+        $discountedForSquarePayment = 0.00;
 
-        // 1. Determine origin and destination coordinates and zip codes
-        $originLat = $data['pickup_lat'] ?? null;
-        $originLng = $data['pickup_lng'] ?? null;
-        $originZipCode = $data['pickup_zip_code'] ?? null;
-
-        $destinationLat = $data['dropoff_lat'] ?? null;
-        $destinationLng = $data['dropoff_lng'] ?? null;
-        $destinationZipCode = $data['dropoff_zip_code'] ?? null;
+        $commonSettings = $this->commonSettingService->getCommonSettings();
 
         $serviceType = $data['service_type'];
 
-        // Handle airport specific logic for coordinates and tolls/surcharges
-        if ($serviceType === 'from_airport' && isset($data['pickup_airport_id'])) {
-            $airport = $this->airportService->getAirportById((int)$data['pickup_airport_id']);
-            if (!$airport) {
-                throw new NotFoundException("Pickup airport with ID {$data['pickup_airport_id']} not found.");
-            }
-            $originLat = $airport->latitude;
-            $originLng = $airport->longitude;
-            // Assuming your Airport model has a zipCode property
-            // If not, you'll need to add it or fetch it via another service
-            $originZipCode = $airport->zipCode ?? null;
-            $airportToll += $airport->fromTaxToll;
-        } elseif ($serviceType === 'to_airport' && isset($data['dropoff_airport_id'])) {
-            $airport = $this->airportService->getAirportById((int)$data['dropoff_airport_id']);
-            if (!$airport) {
-                throw new NotFoundException("Dropoff airport with ID {$data['dropoff_airport_id']} not found.");
-            }
-            $destinationLat = $airport->latitude;
-            $destinationLng = $airport->longitude;
-            // Assuming your Airport model has a zipCode property
-            // If not, you'll need to add it or fetch it via another service
-            $destinationZipCode = $airport->zipCode ?? null;
-            $airportToll += $airport->toTaxToll;
-        }
+        // 1. Identify airport tolls charges
+        if ($serviceType === 'from_airport' || $serviceType === 'to_airport') {
 
-        // Validate that we have coordinates for distance calculation
-        if (empty($originLat) || empty($originLng) || empty($destinationLat) || empty($destinationLng)) {
-            throw new \Exception("Missing complete origin or destination coordinates for fare calculation.");
-        }
+            $airportId = $data['airport_id'];
+            $airportDetails = $this->airportService->getAirportById($airportId);
+            $airportName = $airportDetails->name;
+
+            if ($serviceType === 'from_airport') {
+                $airportToll = $airportDetails->fromTaxToll;
+            } else if ($serviceType === 'to_airport') {
+                $airportToll = $airportDetails->toTaxToll;
+            }
+        } //end if
+
 
         // 2. Get Distance and Duration from Google Maps Service
+        $pickupLocation = $data['pickup_location'] ?? '';
+        $dropoffLocation = $data['dropoff_location'] ?? '';
+
+        if ($serviceType === 'from_airport') {
+            $pickupLocation = $airportName;
+        } else if ($serviceType === 'to_airport') {
+            $dropoffLocation = $airportName;
+        }
+
         try {
-            $distanceMatrix = $this->googleMapsService->getDistanceMatrix(
-                (float)$originLat, (float)$originLng, (float)$destinationLat, (float)$destinationLng
-            );
-            $distance = $distanceMatrix['distance']; // in meters
-            $duration = $distanceMatrix['duration']; // in seconds
+            $distanceMatrix = $this->googleMapsService->getDistanceMatrix($pickupLocation, $dropoffLocation);
+            $distance = $distanceMatrix['distance'];
+            $duration = $distanceMatrix['duration'];
         } catch (\Exception $e) {
             error_log("Error getting distance matrix: " . $e->getMessage());
             // Fallback or throw a more specific error
             throw new \Exception("Could not calculate distance and duration for fare. " . $e->getMessage());
         }
 
-        // 3. Calculate Base Fare using Slab Service (Placeholder)
-        // This is where your actual slab logic would go. For now, a simple distance-based calculation.
-        // You would typically use $this->slabService->calculateBaseFare($distance, $duration, $data['car_id'] ?? null);
-        $baseFare = ($distance / 1000) * 2.5; // Example: $2.5 per km (distance is in meters)
+        // 3. Calculate Extra Charges based on Dropoff Location
+        $extraCharges = $this->_calculateExtraCharges($dropoffLocation);
 
-        // 4. Calculate Child Seat Costs
-        $infantSeats = (int) ($data['infant_seats'] ?? 0);
-        $toddlerSeats = (int) ($data['toddler_seats'] ?? 0);
-        $boosterSeats = (int) ($data['booster_seats'] ?? 0);
 
-        // Assuming costs are fixed as per frontend example comments
-        $childSeatCost = ($infantSeats * 10) + ($toddlerSeats * 10) + ($boosterSeats * 5);
+        // 4. Get a suitable car based on passengers, luggages, and child seats
+        $passengers = (int)($data['adults'] ?? 0) + (int)($data['children'] ?? 0);
+        $luggages = (int)($data['luggage'] ?? 0);
+        $isChildSeat = isset($data['children']) ? 1 : 0;
 
-        // 5. Calculate Stopover Cost
-        $stopovers = (int) ($data['stopovers'] ?? 0);
-        $stopoverCost = $stopovers * 10; // Assuming $10 per stop
+        $cardata = $this->carService->findSuitableCar($passengers, $luggages, $isChildSeat);
 
-        // 6. Calculate Extra Charges based on Zip Codes
-        $zipCodesToCheck = [];
-        if (!empty($originZipCode)) {
-            $zipCodesToCheck[] = $originZipCode;
-        }
-        if (!empty($destinationZipCode)) {
-            $zipCodesToCheck[] = $destinationZipCode;
+        //echo "<pre>";
+        //print_r($cardata);
+        //echo "</pre>";
+
+        if (!$cardata) {
+            throw new \Exception("No suitable car found.");
         }
 
-        // Use array_unique to avoid processing the same zip code multiple times if it's both origin and destination
-        $applicableExtraCharges = $this->extraChargeService->getApplicableExtraCharges(array_unique($zipCodesToCheck));
 
-        foreach ($applicableExtraCharges as $charge) {
-            $extraChargesTotal += $charge->extraCharge;
-            $extraTollChargesTotal += $charge->extraTollCharge;
+        // 5. Calculate Base Fare according to the suggested car's slabs
+        // Assuming $cardata['slabs'] contains the slab fares for the car
+        $slabs = $cardata['slabs'];
+        $baseFare = $this->_calculateDistanceFare($distance, $slabs);
+
+
+        // 6. Calculate Child Seat & Stop Over Costs
+        $stopoverCost = (int)($data['stopover_price'] ?? 0);
+        $childSeatCost = (int)($data['front_price'] ?? 0) + (int)($data['rear_price'] ?? 0) + (int)($data['booster_price'] ?? 0);
+
+
+        // 7. Adjust the Gratuity % from the Base Fare
+        $gratuityPercentage = (float)($commonSettings->gratuity ?? 0);
+        if ($gratuityPercentage > 0) {
+            $gratuityCharge = $baseFare * $gratuityPercentage / 100;
         }
 
-        // 7. Calculate Tunnel Charges (Placeholder)
-        // This would involve checking if the route passes through a tunnel with charges.
-        // $tunnelCharge = $this->tunnelChargeService->getApplicableTunnelCharge($originLat, $originLng, $destinationLat, $destinationLng);
+
+        // 8. Get the Tunnel Charge
+        $tunnelCharge = (float)($commonSettings->tunnelCharge ?? 0);
+
+
+        // 9. Calculate Holiday Charges
+        if (!empty($commonSettings->holidays)) {
+            $pickupDate = $data['pickup_date'] ?? date('Y-m-d');
+            $holidays = $commonSettings->holidays;
+            $holidaySurcharge = (float)($commonSettings->holidaySurcharge);
+            $holidayCharge = $this->_calculateHolidayCharge($pickupDate, $holidays, $holidaySurcharge);
+        }
+
+        $pickupTime = $data['pickup_time'] ?? date('H:i A');
+
+        // 10. Calculate Regular Night Charges
+        $nightCharge = (float)($commonSettings->nightCharge ?? 0);
+        if ($nightCharge > 0) {
+            $nightSurcharge = $nightCharge;
+            $nightStartTime = $commonSettings->nightChargeStartTime;
+            $nightEndTime = $commonSettings->nightChargeEndTime;
+            $nightCharge = $this->_calculateNightCharge($pickupTime, $nightSurcharge, $nightStartTime, $nightEndTime);
+        }
+
+
+        // 11. Calculate Hidden Night Charges
+        $hiddenNightCharge = (float)($commonSettings->hiddenNightCharge ?? 0);
+        if ($hiddenNightCharge > 0) {
+            $hiddenNightSurcharge = $hiddenNightCharge;
+            $hiddenNightStartTime = $commonSettings->hiddenNightChargeStartTime;
+            $hiddenNightEndTime = $commonSettings->hiddenNightChargeEndTime;
+            $hiddenNightCharge = $this->_calculateNightCharge($pickupTime, $hiddenNightSurcharge, $hiddenNightStartTime, $hiddenNightEndTime);
+        }
+
 
         // Total Fare Calculation
-        $totalFare = $baseFare + $childSeatCost + $stopoverCost + $extraChargesTotal + $extraTollChargesTotal + $airportToll + $airportParkingSurcharge;
+        /*echo "<pre>Charge to be added: <br>";
+        print_r("Base Fare: " .  $baseFare . "<br>Gratuity: " . $gratuityCharge . "<br>Tunnel Charge: " . $tunnelCharge .
+            "<br>Airport Toll: " . $airportToll . "<br>Extra Charges: " . $extraCharges .
+            "<br>Holiday: " . $holidayCharge . "<br>Night Charge: " . $nightCharge . "<br>Hidden Night Charge: " . $hiddenNightCharge .
+            "<br>Child Seat Cost: " . $childSeatCost . "<br>Stopover Cost: " . $stopoverCost);
+        echo "</pre>";*/
+        $totalFare = $baseFare + $gratuityCharge + $tunnelCharge +
+            $airportToll + $extraCharges +
+            $holidayCharge + $nightCharge + $hiddenNightCharge +
+            $childSeatCost + $stopoverCost;
 
-        return [
-            'base_fare' => round($baseFare, 2),
-            'distance_km' => round($distance / 1000, 2), // Convert meters to km for output
-            'duration_minutes' => round($duration / 60, 0), // Convert seconds to minutes for output
-            'child_seat_cost' => round($childSeatCost, 2),
-            'stopover_cost' => round($stopoverCost, 2),
-            'extra_charges_total' => round($extraChargesTotal, 2),
-            'extra_toll_charges_total' => round($extraTollChargesTotal, 2),
-            'airport_toll' => round($airportToll, 2),
-            'airport_parking_surcharge' => round($airportParkingSurcharge, 2),
-            'total_fare' => round($totalFare, 2),
-            'details' => [ // Optional: for debugging or detailed display
-                'origin_zip' => $originZipCode,
-                'destination_zip' => $destinationZipCode,
-                'applicable_extra_charges_areas' => array_map(fn($ec) => $ec->areaName, $applicableExtraCharges)
-            ]
-        ];
+
+        // 12. Discount for Square Payment
+        $squareCharge = (float)($commonSettings->squareCharge ?? 0);
+        if ($squareCharge > 0) {
+            $discountedForSquarePayment = $totalFare - ($totalFare * $squareCharge / 100);
+        }
+
+
+        $fareBreakdown = [];
+        $fareBreakdown['service_type'] = $data['service_type'];
+        $fareBreakdown['pickup_location'] = $pickupLocation;
+        $fareBreakdown['dropoff_location'] = $dropoffLocation;
+        $fareBreakdown['pickup_date'] = $pickupDate;
+        $fareBreakdown['pickup_time'] = $pickupTime;
+
+        if (isset($data['from_tax_toll']) && (float)$data['from_tax_toll'] > 0) {
+            $fareBreakdown['from_tax_toll'] = $data['from_tax_toll'];
+        }
+
+        if (isset($data['to_tax_toll']) && (float)$data['to_tax_toll'] > 0) {
+            $fareBreakdown['to_tax_toll'] = $data['to_tax_toll'];
+        }
+
+        if ($extraCharges > 0) {
+            $fareBreakdown['extra_charges'] = '$' . $extraCharges;
+        }
+
+        $fareBreakdown['luggage'] = $luggages;
+        //$fareBreakdown['extra_luggage_capacity'] = $cardata['car']['extra_luggage_capacity'];
+        $fareBreakdown['adults'] = $data['adults'];
+
+        if (isset($data['children']) && (int)$data['children'] > 0) {
+
+            $fareBreakdown['children'] = $data['children'];
+            $fareBreakdown['child_seats'] = $data['child_seats'];
+
+            if (isset($data['front_infant_seats']) && (int)$data['front_infant_seats'] > 0) {
+                $fareBreakdown['front_infant_seats'] = $data['front_infant_seats'];
+                $fareBreakdown['front_price'] = $data['front_price'];
+            }
+
+            if (isset($data['rear_infant_seats']) && (int)$data['rear_infant_seats'] > 0) {
+                $fareBreakdown['rear_infant_seats'] = $data['rear_infant_seats'];
+                $fareBreakdown['rear_price'] = $data['rear_price'];
+            }
+
+            if (isset($data['booster_seats']) && (int)$data['booster_seats'] > 0) {
+                $fareBreakdown['booster_seats'] = $data['booster_seats'];
+                $fareBreakdown['booster_price'] = $data['booster_price'];
+            }
+        } //end if
+
+        $fareBreakdown['total_fare'] = '$' . round($totalFare, 2);
+        $fareBreakdown['base_fare'] = '$' . round($baseFare, 2);
+        $fareBreakdown['distance'] = $distance . ' Miles';
+        $fareBreakdown['duration'] = $duration . ' (approx.)';
+        if ($gratuityCharge > 0) {
+            $fareBreakdown['gratuity'] = '$' . round($gratuityCharge, 2) . ' (' . $commonSettings->gratuity . ' % of fare)';
+        }
+        $fareBreakdown['airport_toll'] = '$' . $airportToll;
+        if ($tunnelCharge > 0) {
+            $fareBreakdown['tunnel_charge'] = '$' . $tunnelCharge;
+        }
+        if ($holidayCharge > 0) {
+            $fareBreakdown['holiday_charge'] = '$' . $holidayCharge;
+        }
+        if ($nightCharge > 0) {
+            $fareBreakdown['night_charge'] = '$' . $nightCharge;
+        }
+        if ($hiddenNightCharge > 0) {
+            $fareBreakdown['hidden_night_charge'] = '$' . $hiddenNightCharge;
+        }
+        if ($stopoverCost > 0) {
+            $fareBreakdown['stopover_cost'] = '$' . $stopoverCost;
+        }
+        if ($childSeatCost > 0) {
+            $fareBreakdown['child_seat_cost'] = '$' . $childSeatCost;
+        }
+        if ($cardata) {
+            $fareBreakdown['suggested_car'] = array(
+                "regular_name" => $cardata['car']['regular_name'],
+                "short_name" => $cardata['car']['short_name'],
+                "color" => $cardata['car']['color'],
+                "car_photo" => $cardata['car']['car_photo'],
+                "car_features" => $cardata['car']['car_features'],
+                "extra_luggage_capacity" => $cardata['car']['extra_luggage_capacity']
+            );
+        }
+        if ($discountedForSquarePayment > 0) {
+            $fareBreakdown['discounted_for_square_payment'] = '$' . round($discountedForSquarePayment, 2);
+        }
+
+        return $fareBreakdown;
+    }
+
+
+    private function _calculateExtraCharges(string $areaName): float
+    {
+        // Fetch extra charge with toll charges based on area name
+        $extraCharge = $this->extraChargeService->getExtraChargeByAreaName($areaName);
+        return $extraCharge ? (float) $extraCharge->extraCharge + (float) $extraCharge->extraTollCharge : 0.0;
+    }
+
+    /**
+     * Calculate the fare based on distance slabs.
+     *
+     * @param float $distance
+     * @param array $slabs
+     * @return float
+     */
+    private function _calculateDistanceFare(float $distance, array $slabs): float
+    {
+        // Step 1: Filter only "Distance" type slabs
+        $distanceSlabs = array_filter($slabs, function ($slab) {
+            return $slab['slab_type'] === 'Distance';
+        });
+
+        // Step 2: Sort slabs by slab_value ASC
+        usort($distanceSlabs, function ($a, $b) {
+            return $a['slab_value'] <=> $b['slab_value'];
+        });
+
+        $totalFare = 0.0;
+        $remainingDistance = $distance;
+        $previousSlabValue = 0;
+
+        foreach ($distanceSlabs as $slab) {
+            $slabValue = (float) $slab['slab_value'];
+            $fareAmount = (float) $slab['fare_amount'];
+
+            // Calculate how much distance is covered in this slab range
+            if ($remainingDistance > 0) {
+                $rangeDistance = $slabValue - $previousSlabValue;
+                $chargeableDistance = min($remainingDistance, $rangeDistance);
+
+                $totalFare += $chargeableDistance * $fareAmount;
+
+                $remainingDistance -= $chargeableDistance;
+                $previousSlabValue = $slabValue;
+            } else {
+                break; // Full distance covered, exit loop
+            }
+        } //end foreach
+
+        // If distance exceeds last slab, use last fare rate
+        if ($remainingDistance > 0) {
+            $lastFare = (float) end($distanceSlabs)['fare_amount'];
+            $totalFare += $remainingDistance * $lastFare;
+        }
+
+        return round($totalFare, 2);
+    }
+
+    /**
+     * Calculate holiday charge based on pickup date and holidays.
+     *
+     * @param string $pickupDate
+     * @param string $holidays
+     * @param float $holidaySurcharge
+     * 
+     * @return float
+     */
+    private function _calculateHolidayCharge(string $pickupDate, string $holidays, float $holidaySurcharge): float
+    {
+        $holidayCharge = 0.0;
+
+        if (in_array($pickupDate, explode(',', $holidays))) {
+            $holidayCharge += $holidaySurcharge;
+        }
+
+        return $holidayCharge;
+    }
+
+    private function _calculateNightCharge(string $pickupTime, float $nightSurcharge, string $nightStartTime, string $nightEndTime): float
+    {
+        $nightCharge = 0.0;
+
+        // Parse pickup in 12-hour format, start/end in 24-hour format
+        $pickup = DateTime::createFromFormat('h:i A', $pickupTime);
+        $start  = DateTime::createFromFormat('H:i:s', $nightStartTime);
+        $end    = DateTime::createFromFormat('H:i:s', $nightEndTime);
+
+        if (!$pickup || !$start || !$end) {
+            return 0.0; // Fallback if time parsing fails
+        }
+
+        // If end time is less than start time, range crosses midnight
+        if ($end <= $start) {
+            $end->modify('+1 day');
+            if ($pickup < $start) {
+                $pickup->modify('+1 day');
+            }
+        }
+
+        if ($pickup >= $start && $pickup <= $end) {
+            $nightCharge = $nightSurcharge;
+        }
+
+        return $nightCharge;
     }
 }

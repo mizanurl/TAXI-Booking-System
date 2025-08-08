@@ -14,6 +14,15 @@ interface CarInterface
     public function findById(int $id): ?Car;
 
     /**
+     * Find a suitable car by the number of passengers, luggages, and/or child-seat facilities.
+     * @param int $passengers
+     * @param int $luggages
+     * @param int $isChildSeat
+     * @return Car|null
+     */
+    public function findSuitableCar(int $passengers, int $luggages, int $isChildSeat): ?Car;
+
+    /**
      * Get all cars.
      * @return Car[]
      */

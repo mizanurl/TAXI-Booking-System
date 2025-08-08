@@ -7,10 +7,10 @@ use App\Services\CarService;
 use App\Http\Response;
 use App\Exceptions\NotFoundException;
 use App\Exceptions\ValidationException;
-use App\Http\Requests\Api\Car\CreateRequest;
-use App\Http\Requests\Api\Car\UpdateRequest;
-use App\Http\Requests\Api\Car\AssignSlabsRequest;
-use App\Http\Requests\Api\Car\UpdateCarSlabFareRequest;
+use App\Http\Requests\Car\CreateRequest;
+use App\Http\Requests\Car\UpdateRequest;
+use App\Http\Requests\Car\AssignSlabsRequest;
+use App\Http\Requests\Car\UpdateCarSlabFareRequest;
 use OpenApi\Attributes as OA;
 
 #[OA\Tag(name: "Car Features", description: "API for managing car vehicles and their pricing slabs.")]

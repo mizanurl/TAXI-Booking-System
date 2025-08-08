@@ -70,11 +70,10 @@ class CarService
             }
 
             $slabs = $this->carSlabFareRepository->getByCarId($id);
-            $slabsArray = array_map(fn($slabFare) => $slabFare->toArray(), $slabs);
 
             return [
                 'car' => $car->toArray(),
-                'slabs' => $slabsArray
+                'slabs' => $slabs
             ];
         } catch (PDOException $e) {
             error_log("Database error in getCarWithSlabs: " . $e->getMessage());
@@ -223,8 +222,7 @@ class CarService
                 if ($currentCarPhotoFilenameInDb) {
                     $this->deleteFile(self::CAR_PHOTO_UPLOAD_DIR_RELATIVE . $currentCarPhotoFilenameInDb);
                 }
-            }
-            elseif (array_key_exists('car_photo', $data) && $data['car_photo'] === null) {
+            } elseif (array_key_exists('car_photo', $data) && $data['car_photo'] === null) {
                 if ($currentCarPhotoFilenameInDb) {
                     $this->deleteFile(self::CAR_PHOTO_UPLOAD_DIR_RELATIVE . $currentCarPhotoFilenameInDb);
                 }
@@ -447,6 +445,39 @@ class CarService
             throw new \Exception("Failed to update car slab fare due to a database error.");
         } catch (\Exception $e) {
             error_log("Error in updateCarSlabFare: " . $e->getMessage());
+            throw $e;
+        }
+    }
+
+    /**
+     * Find a suitable car by the number of passengers and luggages.
+     * @param int $passengers
+     * @param int $luggages
+     * @param int $isChildSeat
+     * @return array|null Returns an associative array with 'car' and 'slabs' keys, or null if not found.
+     * @throws NotFoundException If the car or car slab fare is not found, or if the slab fare does not belong to the car.
+     * @throws \Exception On update failure or database errors.
+     */
+    public function findSuitableCar(int $passengers, int $luggages, int $isChildSeat): ?array
+    {
+        try {
+
+            // Attempt to find the suitable car
+            $car = $this->carRepository->findSuitableCar($passengers, $luggages, $isChildSeat);
+            if (!$car) {
+                throw new NotFoundException("Car with passengers {$passengers} and luggages {$luggages} not found.");
+            }
+
+            // Fetch the car details with associated slab fares for the matched car
+            $carData = $this->getCarWithSlabs($car->id);
+
+            return $carData;
+            
+        } catch (PDOException $e) {
+            error_log("Database error in findSuitableCar: " . $e->getMessage());
+            throw new \Exception("Failed to fetch car due to a database error.");
+        } catch (\Exception $e) {
+            error_log("Error in findSuitableCar: " . $e->getMessage());
             throw $e;
         }
     }
